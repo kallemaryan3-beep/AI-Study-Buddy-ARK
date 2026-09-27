@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 from google import genai
 from pypdf import PdfReader
 
@@ -11,7 +12,11 @@ st.set_page_config(
 st.title("📚 AI Study Buddy")
 st.write("Upload your notes or PDF and let AI help you study.")
 
-# Gemini API
+
+# ============================================================
+# GEMINI SETUP
+# ============================================================
+
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -21,8 +26,13 @@ except Exception:
 client = genai.Client(api_key=api_key)
 
 
+# ============================================================
+# PDF TEXT EXTRACTION
+# ============================================================
+
 def extract_pdf_text(pdf_file):
     reader = PdfReader(pdf_file)
+
     text = ""
 
     for page in reader.pages:
@@ -34,24 +44,62 @@ def extract_pdf_text(pdf_file):
     return text
 
 
+# ============================================================
+# GEMINI AI FUNCTION
+# ============================================================
+
 def ask_ai(prompt):
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt
+
+    models = [
+        "gemini-3.8-flash",
+        "gemini-3.8-flash-lite"
+    ]
+
+    last_error = None
+
+    for model in models:
+
+        for attempt in range(3):
+
+            try:
+
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt
+                )
+
+                if response.text:
+                    return response.text
+
+            except Exception as e:
+
+                last_error = e
+
+                error_text = str(e)
+
+                if "503" in error_text or "UNAVAILABLE" in error_text:
+
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
+
+                    break
+
+                break
+
+    if last_error:
+        st.error(
+            "Gemini is temporarily unavailable. "
+            "Please wait a moment and try again."
         )
 
-        if response.text:
-            return response.text
-
-        return "Gemini returned an empty response."
-
-    except Exception as e:
-        st.error(f"Gemini error: {e}")
-        return None
+    return None
 
 
-# Sidebar
+# ============================================================
+# SIDEBAR
+# ============================================================
+
 st.sidebar.header("📚 Study Settings")
 
 mode = st.sidebar.selectbox(
@@ -72,7 +120,10 @@ num_questions = st.sidebar.slider(
 )
 
 
-# Upload PDF
+# ============================================================
+# PDF UPLOAD
+# ============================================================
+
 uploaded_file = st.file_uploader(
     "📄 Upload your notes or PDF",
     type=["pdf"]
@@ -80,23 +131,35 @@ uploaded_file = st.file_uploader(
 
 notes = ""
 
+
+# ============================================================
+# PROCESS PDF
+# ============================================================
+
 if uploaded_file:
 
     with st.spinner("📖 Reading your notes..."):
         notes = extract_pdf_text(uploaded_file)
 
     if not notes.strip():
+
         st.error(
             "I couldn't extract text from this PDF. "
             "Try a text-based PDF instead."
         )
+
         st.stop()
 
+    # Prevent extremely large prompts
     notes = notes[:100000]
 
     st.success("✅ Your notes are ready!")
 
-    # Explain notes
+
+    # ========================================================
+    # EXPLAIN NOTES
+    # ========================================================
+
     if mode == "Explain my notes":
 
         if st.button("🧠 Explain My Notes"):
@@ -108,6 +171,7 @@ their study material.
 Explain the following study material clearly and simply.
 
 Use:
+
 - Simple language
 - Important definitions
 - Examples
@@ -123,13 +187,20 @@ STUDY MATERIAL:
 """
 
             with st.spinner("🧠 Creating your explanation..."):
+
                 answer = ask_ai(prompt)
 
             if answer:
+
                 st.subheader("🧠 Explanation")
+
                 st.markdown(answer)
 
-    # Flashcards
+
+    # ========================================================
+    # FLASHCARDS
+    # ========================================================
+
     elif mode == "Make flashcards":
 
         if st.button("🃏 Generate Flashcards"):
@@ -160,13 +231,20 @@ STUDY MATERIAL:
 """
 
             with st.spinner("🃏 Creating flashcards..."):
+
                 answer = ask_ai(prompt)
 
             if answer:
+
                 st.subheader("🃏 Flashcards")
+
                 st.markdown(answer)
 
-    # Quiz
+
+    # ========================================================
+    # QUIZ
+    # ========================================================
+
     elif mode == "Create a quiz":
 
         if st.button("❓ Generate Quiz"):
@@ -178,11 +256,13 @@ Create a {num_questions}-question practice quiz
 based ONLY on the following study material.
 
 Use a mixture of:
+
 - Multiple choice
 - True/false
 - Short answer
 
-Do not give the answers immediately after each question.
+Do not provide the answers immediately after each
+question.
 
 After all questions, create a section called:
 
@@ -198,13 +278,20 @@ STUDY MATERIAL:
 """
 
             with st.spinner("❓ Creating your quiz..."):
+
                 answer = ask_ai(prompt)
 
             if answer:
+
                 st.subheader("❓ Practice Quiz")
+
                 st.markdown(answer)
 
-    # Study guide
+
+    # ========================================================
+    # STUDY GUIDE
+    # ========================================================
+
     elif mode == "Study guide":
 
         if st.button("📖 Create Study Guide"):
@@ -233,14 +320,20 @@ STUDY MATERIAL:
 """
 
             with st.spinner("📖 Creating your study guide..."):
+
                 answer = ask_ai(prompt)
 
             if answer:
+
                 st.subheader("📖 Study Guide")
+
                 st.markdown(answer)
 
 
-# General AI Tutor
+# ============================================================
+# GENERAL AI STUDY BUDDY
+# ============================================================
+
 st.divider()
 
 st.subheader("💬 Ask Your Study Buddy")
@@ -249,10 +342,14 @@ question = st.text_input(
     "Ask a question about your uploaded notes:"
 )
 
+
 if question:
 
     if not uploaded_file:
-        st.warning("📄 Please upload your notes or a PDF first.")
+
+        st.warning(
+            "📄 Please upload your notes or a PDF first."
+        )
 
     else:
 
@@ -277,13 +374,22 @@ STUDENT QUESTION:
 """
 
         with st.spinner("🤔 Thinking..."):
+
             answer = ask_ai(prompt)
 
         if answer:
+
             st.subheader("🤖 Study Buddy")
+
             st.markdown(answer)
 
 
+# ============================================================
+# FOOTER
+# ============================================================
+
 st.divider()
 
-st.caption("📚 AI Study Buddy • Powered by Google Gemini")
+st.caption(
+    "📚 AI Study Buddy • Powered by Google Gemini"
+)
