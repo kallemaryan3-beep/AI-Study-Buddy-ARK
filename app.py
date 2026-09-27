@@ -1,7 +1,14 @@
 import streamlit as st
 import time
+import sqlite3
+
 from google import genai
 from pypdf import PdfReader
+
+
+# ============================================================
+# PAGE SETUP
+# ============================================================
 
 st.set_page_config(
     page_title="AI Study Buddy",
@@ -9,33 +16,220 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📚 AI Study Buddy")
-st.write("Upload your notes or PDF and let AI help you study.")
+
+# ============================================================
+# GOOGLE LOGIN
+# ============================================================
+
+if not st.user.is_logged_in:
+
+    st.title("📚 AI Study Buddy")
+
+    st.write("Please sign in with Google to use AI Study Buddy.")
+
+    st.button(
+        "🔐 Sign in with Google",
+        on_click=st.login
+    )
+
+    st.stop()
 
 
 # ============================================================
-# GEMINI SETUP
+# USER INFORMATION
+# ============================================================
+
+user_name = st.user.get("name", "Student")
+user_email = st.user.get("email", "")
+
+
+# ============================================================
+# VISIT DATABASE
+# ============================================================
+
+DATABASE = "visits.db"
+
+
+def setup_database():
+    connection = sqlite3.connect(DATABASE)
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            email TEXT PRIMARY KEY,
+            name TEXT,
+            visits INTEGER DEFAULT 0
+        )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
+def record_visit(email, name):
+    connection = sqlite3.connect(DATABASE)
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT visits FROM users WHERE email = ?",
+        (email,)
+    )
+
+    user = cursor.fetchone()
+
+    if user is None:
+
+        cursor.execute(
+            """
+            INSERT INTO users (email, name, visits)
+            VALUES (?, ?, ?)
+            """,
+            (email, name, 1)
+        )
+
+        visits = 1
+
+    else:
+
+        visits = user[0] + 1
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET name = ?, visits = ?
+            WHERE email = ?
+            """,
+            (name, visits, email)
+        )
+
+    connection.commit()
+    connection.close()
+
+    return visits
+
+
+def get_total_visits():
+    connection = sqlite3.connect(DATABASE)
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT COALESCE(SUM(visits), 0) FROM users"
+    )
+
+    total = cursor.fetchone()[0]
+
+    connection.close()
+
+    return total
+
+
+setup_database()
+
+
+# ============================================================
+# COUNT VISIT
+# ============================================================
+
+if "visit_recorded" not in st.session_state:
+
+    my_visits = record_visit(
+        user_email,
+        user_name
+    )
+
+    st.session_state.visit_recorded = True
+    st.session_state.my_visits = my_visits
+
+else:
+
+    my_visits = st.session_state.my_visits
+
+
+total_visits = get_total_visits()
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+st.sidebar.title("📚 AI Study Buddy")
+
+st.sidebar.write(
+    f"👋 Welcome, **{user_name}**"
+)
+
+st.sidebar.write(
+    f"📧 {user_email}"
+)
+
+st.sidebar.divider()
+
+st.sidebar.metric(
+    "Your Visits",
+    my_visits
+)
+
+st.sidebar.metric(
+    "Total Visits",
+    total_visits
+)
+
+st.sidebar.divider()
+
+st.sidebar.button(
+    "🚪 Sign Out",
+    on_click=st.logout
+)
+
+
+# ============================================================
+# GEMINI API
 # ============================================================
 
 try:
+
     api_key = st.secrets["GEMINI_API_KEY"]
+
 except Exception:
-    st.error("GEMINI_API_KEY is not configured in Streamlit Secrets.")
+
+    st.error(
+        "GEMINI_API_KEY is missing from Streamlit Secrets."
+    )
+
     st.stop()
 
-client = genai.Client(api_key=api_key)
+
+client = genai.Client(
+    api_key=api_key
+)
 
 
 # ============================================================
-# PDF TEXT EXTRACTION
+# MAIN APP
+# ============================================================
+
+st.title("📚 AI Study Buddy")
+
+st.write(
+    "Upload your notes or PDF and let AI help you study."
+)
+
+
+# ============================================================
+# PDF EXTRACTION
 # ============================================================
 
 def extract_pdf_text(pdf_file):
+
     reader = PdfReader(pdf_file)
 
     text = ""
 
     for page in reader.pages:
+
         page_text = page.extract_text()
 
         if page_text:
@@ -45,7 +239,7 @@ def extract_pdf_text(pdf_file):
 
 
 # ============================================================
-# GEMINI AI FUNCTION
+# GEMINI FUNCTION
 # ============================================================
 
 def ask_ai(prompt):
@@ -54,8 +248,6 @@ def ask_ai(prompt):
         "gemini-3.8-flash",
         "gemini-3.8-flash-lite"
     ]
-
-    last_error = None
 
     for model in models:
 
@@ -71,36 +263,34 @@ def ask_ai(prompt):
                 if response.text:
                     return response.text
 
-            except Exception as e:
+            except Exception as error:
 
-                last_error = e
+                error_message = str(error)
 
-                error_text = str(e)
-
-                if "503" in error_text or "UNAVAILABLE" in error_text:
+                if (
+                    "503" in error_message
+                    or "UNAVAILABLE" in error_message
+                ):
 
                     if attempt < 2:
                         time.sleep(2 ** attempt)
                         continue
 
-                    break
-
                 break
 
-    if last_error:
-        st.error(
-            "Gemini is temporarily unavailable. "
-            "Please wait a moment and try again."
-        )
+    st.error(
+        "Gemini is temporarily unavailable. "
+        "Please wait a moment and try again."
+    )
 
     return None
 
 
 # ============================================================
-# SIDEBAR
+# STUDY SETTINGS
 # ============================================================
 
-st.sidebar.header("📚 Study Settings")
+st.sidebar.subheader("Study Settings")
 
 mode = st.sidebar.selectbox(
     "What do you want to do?",
@@ -132,28 +322,27 @@ uploaded_file = st.file_uploader(
 notes = ""
 
 
-# ============================================================
-# PROCESS PDF
-# ============================================================
-
 if uploaded_file:
 
     with st.spinner("📖 Reading your notes..."):
-        notes = extract_pdf_text(uploaded_file)
+
+        notes = extract_pdf_text(
+            uploaded_file
+        )
 
     if not notes.strip():
 
         st.error(
-            "I couldn't extract text from this PDF. "
-            "Try a text-based PDF instead."
+            "I couldn't extract text from this PDF."
         )
 
         st.stop()
 
-    # Prevent extremely large prompts
     notes = notes[:100000]
 
-    st.success("✅ Your notes are ready!")
+    st.success(
+        "✅ Your notes are ready!"
+    )
 
 
     # ========================================================
@@ -165,34 +354,35 @@ if uploaded_file:
         if st.button("🧠 Explain My Notes"):
 
             prompt = f"""
-You are an expert tutor helping a student understand
-their study material.
+You are an expert tutor.
 
 Explain the following study material clearly and simply.
 
 Use:
-
 - Simple language
 - Important definitions
 - Examples
 - Key ideas
-- A short summary at the end
+- A short summary
 
-Do not invent information that isn't supported by
-the study material.
+Only use information supported by the study material.
 
 STUDY MATERIAL:
 
 {notes}
 """
 
-            with st.spinner("🧠 Creating your explanation..."):
+            with st.spinner(
+                "🧠 Creating your explanation..."
+            ):
 
                 answer = ask_ai(prompt)
 
             if answer:
 
-                st.subheader("🧠 Explanation")
+                st.subheader(
+                    "🧠 Explanation"
+                )
 
                 st.markdown(answer)
 
@@ -208,10 +398,9 @@ STUDY MATERIAL:
             prompt = f"""
 You are a study assistant.
 
-Create useful flashcards from the following study
-material.
+Create useful flashcards from the study material.
 
-Format every card like this:
+Format them like this:
 
 ### Card 1
 **Question:** ...
@@ -221,7 +410,7 @@ Format every card like this:
 **Question:** ...
 **Answer:** ...
 
-Focus on important concepts rather than tiny details.
+Focus on important concepts.
 
 Only use information supported by the study material.
 
@@ -230,13 +419,17 @@ STUDY MATERIAL:
 {notes}
 """
 
-            with st.spinner("🃏 Creating flashcards..."):
+            with st.spinner(
+                "🃏 Creating flashcards..."
+            ):
 
                 answer = ask_ai(prompt)
 
             if answer:
 
-                st.subheader("🃏 Flashcards")
+                st.subheader(
+                    "🃏 Flashcards"
+                )
 
                 st.markdown(answer)
 
@@ -253,22 +446,20 @@ STUDY MATERIAL:
 You are an expert teacher.
 
 Create a {num_questions}-question practice quiz
-based ONLY on the following study material.
+based ONLY on the study material.
 
 Use a mixture of:
-
 - Multiple choice
 - True/false
 - Short answer
 
-Do not provide the answers immediately after each
-question.
+Do not give answers immediately after each question.
 
-After all questions, create a section called:
+At the end, create:
 
 ANSWER KEY
 
-Put the correct answers in that section.
+Then list the correct answers.
 
 Only use information supported by the study material.
 
@@ -277,13 +468,17 @@ STUDY MATERIAL:
 {notes}
 """
 
-            with st.spinner("❓ Creating your quiz..."):
+            with st.spinner(
+                "❓ Creating quiz..."
+            ):
 
                 answer = ask_ai(prompt)
 
             if answer:
 
-                st.subheader("❓ Practice Quiz")
+                st.subheader(
+                    "❓ Practice Quiz"
+                )
 
                 st.markdown(answer)
 
@@ -299,8 +494,7 @@ STUDY MATERIAL:
             prompt = f"""
 You are an expert study coach.
 
-Turn the following study material into a clear,
-organized study guide.
+Turn the study material into a clear study guide.
 
 Include:
 
@@ -310,7 +504,7 @@ Include:
 4. Concepts students commonly confuse
 5. Examples
 6. Things to memorize
-7. A short final review
+7. Final review
 
 Only use information supported by the material.
 
@@ -319,24 +513,30 @@ STUDY MATERIAL:
 {notes}
 """
 
-            with st.spinner("📖 Creating your study guide..."):
+            with st.spinner(
+                "📖 Creating study guide..."
+            ):
 
                 answer = ask_ai(prompt)
 
             if answer:
 
-                st.subheader("📖 Study Guide")
+                st.subheader(
+                    "📖 Study Guide"
+                )
 
                 st.markdown(answer)
 
 
 # ============================================================
-# GENERAL AI STUDY BUDDY
+# ASK STUDY BUDDY
 # ============================================================
 
 st.divider()
 
-st.subheader("💬 Ask Your Study Buddy")
+st.subheader(
+    "💬 Ask Your Study Buddy"
+)
 
 question = st.text_input(
     "Ask a question about your uploaded notes:"
@@ -348,7 +548,7 @@ if question:
     if not uploaded_file:
 
         st.warning(
-            "📄 Please upload your notes or a PDF first."
+            "📄 Please upload your notes or PDF first."
         )
 
     else:
@@ -356,8 +556,8 @@ if question:
         prompt = f"""
 You are a helpful AI tutor.
 
-Answer the student's question using ONLY the study
-material provided below.
+Answer the student's question using ONLY the
+study material below.
 
 If the answer cannot be found in the material,
 say that clearly instead of making something up.
@@ -373,13 +573,17 @@ STUDENT QUESTION:
 {question}
 """
 
-        with st.spinner("🤔 Thinking..."):
+        with st.spinner(
+            "🤔 Thinking..."
+        ):
 
             answer = ask_ai(prompt)
 
         if answer:
 
-            st.subheader("🤖 Study Buddy")
+            st.subheader(
+                "🤖 Study Buddy"
+            )
 
             st.markdown(answer)
 
@@ -392,4 +596,5 @@ st.divider()
 
 st.caption(
     "📚 AI Study Buddy • Powered by Google Gemini"
+)
 )
