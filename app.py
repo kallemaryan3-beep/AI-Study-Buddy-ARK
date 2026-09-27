@@ -37,11 +37,14 @@ def extract_pdf_text(pdf_file):
 def ask_ai(prompt):
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=prompt
         )
 
-        return response.text
+        if response.text:
+            return response.text
+
+        return "Gemini returned an empty response."
 
     except Exception as e:
         st.error(f"Gemini error: {e}")
@@ -63,13 +66,13 @@ mode = st.sidebar.selectbox(
 
 num_questions = st.sidebar.slider(
     "Number of quiz questions",
-    5,
-    30,
-    10
+    min_value=5,
+    max_value=30,
+    value=10
 )
 
 
-# PDF upload
+# Upload PDF
 uploaded_file = st.file_uploader(
     "📄 Upload your notes or PDF",
     type=["pdf"]
@@ -79,18 +82,19 @@ notes = ""
 
 if uploaded_file:
 
-    with st.spinner("Reading your notes..."):
+    with st.spinner("📖 Reading your notes..."):
         notes = extract_pdf_text(uploaded_file)
 
     if not notes.strip():
-        st.error("I couldn't extract text from this PDF.")
+        st.error(
+            "I couldn't extract text from this PDF. "
+            "Try a text-based PDF instead."
+        )
         st.stop()
 
-    # Limit prompt size
     notes = notes[:100000]
 
     st.success("✅ Your notes are ready!")
-
 
     # Explain notes
     if mode == "Explain my notes":
@@ -98,7 +102,8 @@ if uploaded_file:
         if st.button("🧠 Explain My Notes"):
 
             prompt = f"""
-You are an expert tutor.
+You are an expert tutor helping a student understand
+their study material.
 
 Explain the following study material clearly and simply.
 
@@ -107,22 +112,22 @@ Use:
 - Important definitions
 - Examples
 - Key ideas
-- A short summary
+- A short summary at the end
 
-Only use information supported by the study material.
+Do not invent information that isn't supported by
+the study material.
 
 STUDY MATERIAL:
 
 {notes}
 """
 
-            with st.spinner("Creating your explanation..."):
+            with st.spinner("🧠 Creating your explanation..."):
                 answer = ask_ai(prompt)
 
             if answer:
                 st.subheader("🧠 Explanation")
                 st.markdown(answer)
-
 
     # Flashcards
     elif mode == "Make flashcards":
@@ -132,9 +137,10 @@ STUDY MATERIAL:
             prompt = f"""
 You are a study assistant.
 
-Create useful flashcards from the study material.
+Create useful flashcards from the following study
+material.
 
-Format them like this:
+Format every card like this:
 
 ### Card 1
 **Question:** ...
@@ -144,7 +150,7 @@ Format them like this:
 **Question:** ...
 **Answer:** ...
 
-Focus on important concepts.
+Focus on important concepts rather than tiny details.
 
 Only use information supported by the study material.
 
@@ -153,13 +159,12 @@ STUDY MATERIAL:
 {notes}
 """
 
-            with st.spinner("Creating flashcards..."):
+            with st.spinner("🃏 Creating flashcards..."):
                 answer = ask_ai(prompt)
 
             if answer:
                 st.subheader("🃏 Flashcards")
                 st.markdown(answer)
-
 
     # Quiz
     elif mode == "Create a quiz":
@@ -170,33 +175,34 @@ STUDY MATERIAL:
 You are an expert teacher.
 
 Create a {num_questions}-question practice quiz
-based ONLY on the study material.
+based ONLY on the following study material.
 
 Use a mixture of:
 - Multiple choice
 - True/false
 - Short answer
 
-Do not give the answer immediately after each question.
+Do not give the answers immediately after each question.
 
-At the end, create:
+After all questions, create a section called:
 
 ANSWER KEY
 
-Then list the correct answers.
+Put the correct answers in that section.
+
+Only use information supported by the study material.
 
 STUDY MATERIAL:
 
 {notes}
 """
 
-            with st.spinner("Creating your quiz..."):
+            with st.spinner("❓ Creating your quiz..."):
                 answer = ask_ai(prompt)
 
             if answer:
                 st.subheader("❓ Practice Quiz")
                 st.markdown(answer)
-
 
     # Study guide
     elif mode == "Study guide":
@@ -206,7 +212,8 @@ STUDY MATERIAL:
             prompt = f"""
 You are an expert study coach.
 
-Turn the study material into a clear study guide.
+Turn the following study material into a clear,
+organized study guide.
 
 Include:
 
@@ -216,16 +223,16 @@ Include:
 4. Concepts students commonly confuse
 5. Examples
 6. Things to memorize
-7. Final review
+7. A short final review
 
-Only use information supported by the study material.
+Only use information supported by the material.
 
 STUDY MATERIAL:
 
 {notes}
 """
 
-            with st.spinner("Creating your study guide..."):
+            with st.spinner("📖 Creating your study guide..."):
                 answer = ask_ai(prompt)
 
             if answer:
@@ -233,7 +240,7 @@ STUDY MATERIAL:
                 st.markdown(answer)
 
 
-# General AI tutor
+# General AI Tutor
 st.divider()
 
 st.subheader("💬 Ask Your Study Buddy")
@@ -245,7 +252,7 @@ question = st.text_input(
 if question:
 
     if not uploaded_file:
-        st.warning("📄 Upload your notes first.")
+        st.warning("📄 Please upload your notes or a PDF first.")
 
     else:
 
@@ -253,10 +260,12 @@ if question:
 You are a helpful AI tutor.
 
 Answer the student's question using ONLY the study
-material below.
+material provided below.
 
 If the answer cannot be found in the material,
 say that clearly instead of making something up.
+
+Give a clear and student-friendly explanation.
 
 STUDY MATERIAL:
 
@@ -267,7 +276,7 @@ STUDENT QUESTION:
 {question}
 """
 
-        with st.spinner("Thinking..."):
+        with st.spinner("🤔 Thinking..."):
             answer = ask_ai(prompt)
 
         if answer:
