@@ -1,7 +1,6 @@
 import os
-import io
 import streamlit as st
-from openai import OpenAI
+from google import genai
 from pypdf import PdfReader
 
 # -----------------------------
@@ -17,14 +16,14 @@ st.set_page_config(
 st.title("📚 AI Study Buddy")
 st.write("Upload your notes or PDF and let AI help you study.")
 
-# Get API key from environment
-api_key = os.getenv("OPENAI_API_KEY")
+# Get Gemini API key
+api_key = os.getenv("GEMINI_API_KEY")
 
 if not api_key:
-    st.error("OPENAI_API_KEY is not configured.")
+    st.error("GEMINI_API_KEY is not configured.")
     st.stop()
 
-client = OpenAI(api_key=api_key)
+client = genai.Client(api_key=api_key)
 
 
 # -----------------------------
@@ -47,13 +46,13 @@ def extract_pdf_text(pdf_file):
 
 
 def ask_ai(prompt):
-    """Send a prompt to the AI model."""
-    response = client.responses.create(
-        model="gpt-5-mini",
-        input=prompt
+    """Send a prompt to the Gemini model."""
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
     )
 
-    return response.output_text
+    return response.text
 
 
 # -----------------------------
